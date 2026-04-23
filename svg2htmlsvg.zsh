@@ -310,7 +310,7 @@ case $level in
 esac
 
 if (( VERBOSITY >= min_verbosity )); then
-    print -u $output_fd "${color}[${timestamp}] [${prefix}] ${message}${COLORS[reset]}"
+    print -r -u "$output_fd" "${color}[${timestamp}] [${prefix}] ${message}${COLORS[reset]}"
 fi
 ```
 
@@ -627,8 +627,8 @@ print – “$sanitized”
 
 usage() {
 emulate -L zsh
-print -u2 “Usage: ${SCRIPT_NAME} [OPTIONS] <input.svg>”
-print -u2 “Try ‘${SCRIPT_NAME} –help’ for more information.”
+print -r -u2 ‘Usage: ‘”${SCRIPT_NAME}”’ [OPTIONS] <input.svg>’
+print -r -u2 ‘Try ‘”’${SCRIPT_NAME} –help’”’ for more information.’
 }
 
 show_help() {
@@ -803,9 +803,9 @@ debug "Strip comments: ${OPT_STRIP_COMMENTS}"
 debug "Strip metadata: ${OPT_STRIP_METADATA}"
 debug "Minify: ${OPT_MINIFY}"
 debug "Wrap HTML: ${OPT_WRAP_HTML}"
-debug "CSS class: ${OPT_CLASS:-<none>}"
-debug "Element ID: ${OPT_ID:-<none>}"
-debug "HTML title: ${OPT_TITLE:-<none>}"
+debug "CSS class: ${OPT_CLASS:-(none)}"
+debug "Element ID: ${OPT_ID:-(none)}"
+debug "HTML title: ${OPT_TITLE:-(none)}"
 debug "Keep XML decl: ${OPT_KEEP_XMLDECL}"
 debug "Keep DOCTYPE: ${OPT_KEEP_DOCTYPE}"
 debug "Positional arguments: ${(j:, :)POSITIONAL_ARGS:-none}"
@@ -839,8 +839,8 @@ fi
 
 # Basic SVG sniff: check for an <svg tag in the first 50 lines
 if ! head -n 50 "$input_file" | grep -qi '<svg'; then
-    error "Input file does not appear to be an SVG: ${input_file}"
-    error "  No <svg> element found in the first 50 lines."
+    error 'Input file does not appear to be an SVG: '"${input_file}"
+    error '  No <svg> element found in the first 50 lines.'
     exit $E_NOINPUT
 fi
 
@@ -854,18 +854,24 @@ if [[ -n "${OUTPUT_FILE}" ]]; then
     fi
 fi
 
-# Validate --class value doesn't contain quotes or angle brackets
+# Validate --class value doesn't contain quotes or angle brackets.
+# Uses tr -d to strip prohibited characters and compares against the
+# original — avoids regex escaping hazards across zsh versions.
 if [[ -n "$OPT_CLASS" ]]; then
-    if [[ "$OPT_CLASS" =~ [\"\'\<\>] ]]; then
-        error "Invalid characters in --class value: ${OPT_CLASS}"
+    local class_clean
+    class_clean=$(print -rn -- "$OPT_CLASS" | tr -d '"'"'"'<>')
+    if [[ "$class_clean" != "$OPT_CLASS" ]]; then
+        error 'Invalid characters in --class value: '"${OPT_CLASS}"
         exit $E_USAGE
     fi
 fi
 
 # Validate --id value doesn't contain quotes or angle brackets
 if [[ -n "$OPT_ID" ]]; then
-    if [[ "$OPT_ID" =~ [\"\'\<\>] ]]; then
-        error "Invalid characters in --id value: ${OPT_ID}"
+    local id_clean
+    id_clean=$(print -rn -- "$OPT_ID" | tr -d '"'"'"'<>')
+    if [[ "$id_clean" != "$OPT_ID" ]]; then
+        error 'Invalid characters in --id value: '"${OPT_ID}"
         exit $E_USAGE
     fi
 fi
@@ -884,7 +890,7 @@ debug "Arguments validated successfully"
 run() {
 emulate -L zsh
 if [[ $DRY_RUN == true ]]; then
-info “[DRY-RUN] Would execute: $*”
+info ’[DRY-RUN] Would execute: ’”$*”
 return 0
 fi
 debug “Executing: $*”
@@ -1107,6 +1113,14 @@ if (!in_meta || length(result) > 0) print result
 
 # Outputs: Transformed text to stdout
 
+# 
+
+# NOTE: Attribute values are passed to awk as separate variables to avoid
+
+# embedding literal double quotes in shell strings, which causes
+
+# quoting conflicts between zsh and awk’s -v value parsing.
+
 _inject_attributes() {
 emulate -L zsh
 local css_class=”$1”
@@ -1118,15 +1132,19 @@ if [[ -z "$css_class" ]] && [[ -z "$elem_id" ]]; then
     return
 fi
 
-# Build the injection string
-local inject=""
-[[ -n "$elem_id" ]]   && inject="${inject} id=\"${elem_id}\""
-[[ -n "$css_class" ]] && inject="${inject} class=\"${css_class}\""
-
-# Insert attributes right after the opening <svg (before the first >)
-# Only modifies the FIRST <svg tag encountered.
-"${REQUIRED_BINARIES[awk]}" -v attrs="$inject" '
-BEGIN { done_inject = 0 }
+# Pass class and id as separate awk variables; awk builds the
+# attribute string itself, keeping all double quotes inside awk's
+# own single-quoted program block.
+"${REQUIRED_BINARIES[awk]}" \
+    -v inject_class="$css_class" \
+    -v inject_id="$elem_id" \
+'
+BEGIN {
+    done_inject = 0
+    attrs = ""
+    if (inject_id    != "") attrs = attrs " id=\"" inject_id "\""
+    if (inject_class != "") attrs = attrs " class=\"" inject_class "\""
+}
 {
     if (!done_inject && match($0, /<svg/)) {
         sub(/<svg/, "<svg" attrs)
@@ -1222,25 +1240,25 @@ debug “Starting main execution”
 ```
 local input_file="${POSITIONAL_ARGS[1]}"
 info "Input:  ${input_file}"
-[[ -n "$OUTPUT_FILE" ]] && info "Output: ${OUTPUT_FILE}" || info "Output: <stdout>"
+[[ -n "$OUTPUT_FILE" ]] && info "Output: ${OUTPUT_FILE}" || info 'Output: stdout'
 
 # Optionally validate the SVG first
 _validate_svg "$input_file"
 
 # --- Dry-run mode: describe what would happen and exit ---
 if [[ "$DRY_RUN" == true ]]; then
-    info "[DRY-RUN] Transformation pipeline for: ${input_file}"
-    [[ "$OPT_KEEP_XMLDECL" == false ]] && info "[DRY-RUN]   1. Strip <?xml ...?> declaration"
-    [[ "$OPT_KEEP_DOCTYPE" == false ]]  && info "[DRY-RUN]   2. Strip <!DOCTYPE ...> declaration"
-    [[ "$OPT_STRIP_COMMENTS" == true ]] && info "[DRY-RUN]   3. Strip XML comments"
-    [[ "$OPT_STRIP_METADATA" == true ]] && info "[DRY-RUN]   4. Strip <metadata> elements"
+    info '[DRY-RUN] Transformation pipeline for: '"${input_file}"
+    [[ "$OPT_KEEP_XMLDECL" == false ]] && info '[DRY-RUN]   1. Strip <?xml ...?> declaration'
+    [[ "$OPT_KEEP_DOCTYPE" == false ]]  && info '[DRY-RUN]   2. Strip <!DOCTYPE ...> declaration'
+    [[ "$OPT_STRIP_COMMENTS" == true ]] && info '[DRY-RUN]   3. Strip XML comments'
+    [[ "$OPT_STRIP_METADATA" == true ]] && info '[DRY-RUN]   4. Strip <metadata> elements'
     if [[ -n "$OPT_CLASS" ]] || [[ -n "$OPT_ID" ]]; then
-        info "[DRY-RUN]   5. Inject attributes: class=${OPT_CLASS:-<none>} id=${OPT_ID:-<none>}"
+        info '[DRY-RUN]   5. Inject attributes: class='"${OPT_CLASS:-(none)}"' id='"${OPT_ID:-(none)}"
     fi
-    [[ "$OPT_MINIFY" == true ]]    && info "[DRY-RUN]   6. Minify output"
-    [[ "$OPT_WRAP_HTML" == true ]]  && info "[DRY-RUN]   7. Wrap in HTML5 document (title: ${OPT_TITLE:-Inline SVG})"
-    [[ -n "$OUTPUT_FILE" ]]         && info "[DRY-RUN]   -> Write to: ${OUTPUT_FILE}"
-    info "[DRY-RUN] No output written."
+    [[ "$OPT_MINIFY" == true ]]    && info '[DRY-RUN]   6. Minify output'
+    [[ "$OPT_WRAP_HTML" == true ]]  && info '[DRY-RUN]   7. Wrap in HTML5 document (title: '"${OPT_TITLE:-Inline SVG}"')'
+    [[ -n "$OUTPUT_FILE" ]]         && info '[DRY-RUN]   -> Write to: '"${OUTPUT_FILE}"
+    info '[DRY-RUN] No output written.'
     return $E_SUCCESS
 fi
 
