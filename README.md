@@ -279,4 +279,4 @@ Built with the [Shell-Script-Templates](https://github.com/soren42/Shell-Script-
 
 -----
 
-*Version 1.0.0 — April 2026*
+*Version 1.0.2 — April 2026*
